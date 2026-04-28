@@ -1,3 +1,4 @@
+import ast
 import smtplib
 import os
 from email.mime.text import MIMEText
@@ -121,6 +122,25 @@ def save_last_updates(data):
         f.write(data)
     return True
 
+def load_cached_updates():
+    if not os.path.exists(LAST_UPDATES_FILE):
+        return []
+
+    try:
+        with open(LAST_UPDATES_FILE, 'r', encoding='utf-8', errors='ignore') as f:
+            raw = f.read().strip()
+
+        if not raw:
+            return []
+
+        cached_updates = ast.literal_eval(raw)
+        if isinstance(cached_updates, list):
+            return cached_updates
+    except Exception:
+        pass
+
+    return []
+
 def monitor_updates():
     while True:
         current_updates = scrape_college_updates()
@@ -139,8 +159,13 @@ def monitor_updates():
 def home():
     updates = scrape_college_updates()
     if isinstance(updates, str):
-        flash(updates, 'error')
-        updates = []
+        cached_updates = load_cached_updates()
+        if cached_updates:
+            flash('Showing cached updates because live updates could not be fetched right now.', 'warning')
+            updates = cached_updates
+        else:
+            flash(updates, 'error')
+            updates = []
     return render_template('index.html', updates=updates)
 
 @app.route('/subscribe', methods=['GET', 'POST'])
@@ -159,6 +184,9 @@ def subscribe():
 def api_updates():
     updates = scrape_college_updates()
     if isinstance(updates, str):
+        cached_updates = load_cached_updates()
+        if cached_updates:
+            return jsonify(cached_updates)
         return jsonify({"error": updates}), 500
     return jsonify(updates)
 
