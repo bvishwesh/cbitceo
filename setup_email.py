@@ -58,12 +58,17 @@ def setup_email():
         print("❌ Invalid choice. Please run the script again.")
         return
     
+    # Generate a random secret key for Flask
+    import secrets
+    secret_key = secrets.token_hex(24)
+    
     # Create .env file
     env_content = f"""# Email Configuration for CBIT Updates
 EMAIL_ADDRESS={email}
 EMAIL_PASSWORD={password}
 SMTP_SERVER={smtp_server}
 SMTP_PORT={smtp_port}
+FLASK_SECRET_KEY={secret_key}
 """
     
     env_file = Path(".env")
