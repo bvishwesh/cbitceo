@@ -1,17 +1,35 @@
 # Environment variables (NEVER commit these!)
 .env
+.env.*
+!.env.example
 venv/.env
 venv/.env.txt
 
 # Python
 __pycache__/
 *.py[cod]
+*$py.class
 venv/
 .venv/
+env/
+build/
+dist/
+
+# PII & Cache
+emails.txt
+last_updates.txt
+
+# Frontend
+node_modules/
+frontend/project/node_modules/
+.bolt/
+frontend/project/.bolt/
 
 # IDE
 .vscode/
 .idea/
+*.swp
+*.swo
 
 # OS
 .DS_Store
