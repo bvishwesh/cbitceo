@@ -1,6 +1,7 @@
 import ast
 import smtplib
 import os
+import re
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 from flask import Flask, render_template, request, redirect, url_for, flash
@@ -12,7 +13,7 @@ from flask import jsonify
 from flask_cors import CORS
 
 app = Flask(__name__)
-app.secret_key = 'your-secret-key-here'
+app.secret_key = os.environ.get('FLASK_SECRET_KEY', 'your-secret-key-here')
 CORS(app, resources={r"/api/*": {"origins": "*"}}, supports_credentials=True)
 
 EMAIL_ADDRESS = os.environ.get('EMAIL_ADDRESS', 'your_email@gmail.com')
@@ -22,6 +23,11 @@ SMTP_PORT = int(os.environ.get('SMTP_PORT', '587'))
 
 EMAIL_FILE = 'emails.txt'
 LAST_UPDATES_FILE = 'last_updates.txt'
+
+def is_valid_email(email):
+    """Basic email validation regex."""
+    pattern = r'^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$'
+    return re.match(pattern, email) is not None
 
 def scrape_college_updates():
     url = 'https://www.cbit.ac.in/'
@@ -71,18 +77,29 @@ def scrape_college_updates():
 
 def get_subscribers():
     if os.path.exists(EMAIL_FILE):
-        with open(EMAIL_FILE, 'r') as f:
-            return [email.strip() for email in f.read().splitlines() if email.strip()]
+        try:
+            with open(EMAIL_FILE, 'r') as f:
+                return [email.strip() for email in f.read().splitlines() if email.strip()]
+        except Exception as e:
+            print(f"Error reading subscribers: {e}")
     return []
 
 def save_subscriber(email):
+    if not is_valid_email(email):
+        return False
+        
     if not os.path.exists(EMAIL_FILE):
         open(EMAIL_FILE, 'a').close()
-    with open(EMAIL_FILE, 'r+') as f:
-        subscribers = [e.strip() for e in f.read().splitlines()]
-        if email not in subscribers:
-            f.write(f"{email}\n")
-            return True
+    
+    try:
+        with open(EMAIL_FILE, 'r+') as f:
+            subscribers = [e.strip() for e in f.read().splitlines()]
+            if email not in subscribers:
+                f.seek(0, 2) # Move to end of file
+                f.write(f"{email}\n")
+                return True
+    except Exception as e:
+        print(f"Error saving subscriber: {e}")
     return False
 
 def send_email_notification(new_updates):
@@ -96,31 +113,41 @@ def send_email_notification(new_updates):
         body = "Hello,\n\nThere are new updates from the college website:\n\n"
         for update in new_updates:
             body += f"- {update['title']}\n"
+        body += "\nCheck them out here: https://www.cbit.ac.in/\n"
 
         msg = MIMEMultipart()
         msg['From'] = EMAIL_ADDRESS
+        msg['To'] = EMAIL_ADDRESS # Send to self
         msg['Subject'] = subject
         msg.attach(MIMEText(body))
 
         with smtplib.SMTP(SMTP_SERVER, SMTP_PORT) as smtp:
             smtp.starttls()
             smtp.login(EMAIL_ADDRESS, EMAIL_PASSWORD)
+            # Use BCC for privacy - pass subscribers to sendmail but don't put them in headers
             smtp.sendmail(EMAIL_ADDRESS, subscribers, msg.as_string())
 
-        print("Email notifications sent successfully.")
+        print(f"Email notifications sent successfully to {len(subscribers)} subscribers.")
     except Exception as e:
         print(f"Error sending emails: {e}")
 
 def get_last_updates():
     if os.path.exists(LAST_UPDATES_FILE):
-        with open(LAST_UPDATES_FILE, 'r', encoding='utf-8', errors='ignore') as f:
-            return f.read()
+        try:
+            with open(LAST_UPDATES_FILE, 'r', encoding='utf-8', errors='ignore') as f:
+                return f.read()
+        except Exception:
+            pass
     return "[]"
 
 def save_last_updates(data):
-    with open(LAST_UPDATES_FILE, 'w') as f:
-        f.write(data)
-    return True
+    try:
+        with open(LAST_UPDATES_FILE, 'w', encoding='utf-8') as f:
+            f.write(data)
+        return True
+    except Exception as e:
+        print(f"Error saving last updates: {e}")
+    return False
 
 def load_cached_updates():
     if not os.path.exists(LAST_UPDATES_FILE):
@@ -171,12 +198,14 @@ def home():
 @app.route('/subscribe', methods=['GET', 'POST'])
 def subscribe():
     if request.method == 'POST':
-        email = request.form.get('email')
+        email = request.form.get('email', '').strip()
         if email:
-            if save_subscriber(email):
+            if not is_valid_email(email):
+                flash('Please enter a valid email address.', 'error')
+            elif save_subscriber(email):
                 flash('You have been subscribed successfully!', 'success')
             else:
-                flash('You are already subscribed.', 'info')
+                flash('You are already subscribed or an error occurred.', 'info')
             return redirect(url_for('home'))
     return render_template('subscribe.html')
 
@@ -193,13 +222,21 @@ def api_updates():
 @app.route('/api/subscribe', methods=['POST'])
 def api_subscribe():
     data = request.get_json(silent=True) or {}
-    email = data.get('email')
+    email = data.get('email', '').strip()
     if not email:
         return jsonify({"error": "Email is required"}), 400
+    if not is_valid_email(email):
+        return jsonify({"error": "Invalid email address"}), 400
+        
     if save_subscriber(email):
         return jsonify({"message": "Subscribed"}), 201
     else:
-        return jsonify({"message": "Already subscribed"}), 200
+        # Check if already in list to give better message
+        subscribers = get_subscribers()
+        if email in subscribers:
+            return jsonify({"message": "Already subscribed"}), 200
+        else:
+            return jsonify({"error": "Failed to subscribe"}), 500
 
 @app.route('/health')
 def health():
